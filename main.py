@@ -10,10 +10,11 @@ import os
 import requests
 from datetime import datetime
 
+# Securely pulls your hidden Discord URL from GitHub's server secrets
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
 def send_to_discord(message):
-    """Broadcasts the clean data to your Discord channel"""
+    """Broadcasts clean formatted data directly to your Discord channel"""
     if not DISCORD_WEBHOOK_URL:
         print("❌ Error: DISCORD_WEBHOOK_URL environment variable is missing on this GitHub repo.")
         return
@@ -25,7 +26,7 @@ def send_to_discord(message):
     try:
         response = requests.post(DISCORD_WEBHOOK_URL, json=payload)
         if response.status_code == 204:
-            print("🚀 Success! Clean layout delivered to Discord.")
+            print("🚀 Success! Clean mobile layout delivered to Discord.")
         else:
             print(f"⚠️ Discord Webhook rejected with status code: {response.status_code}")
     except Exception as e:
@@ -43,12 +44,6 @@ def run_scanner(ticker):
     bull_puts = bull_put.find_bull_put_spreads(master_df, metadata)
     
     all_setups = bull_calls + butterflies + broken_wings + bull_puts
-    
-    if not master_df.empty:
-        current_spot = master_df['CMP'].iloc[0]
-        for setup in all_setups:
-            setup['CMP'] = current_spot
-            
     return all_setups
 
 def execute_scan_cycle():
@@ -59,8 +54,18 @@ def execute_scan_cycle():
     
     for ticker in target_portfolio:
         stock_setups = run_scanner(ticker)
+        
+        if not stock_setups:
+            continue
+            
+        # Get CMP from the data layer to display on the mobile layout
+        master_df, _ = option_chain.fetch_option_data(ticker)
+        current_spot = master_df['CMP'].iloc[0] if (master_df is not None and not master_df.empty) else 0.0
+        
         for setup in stock_setups:
             setup['Ticker'] = ticker
+            setup['CMP'] = current_spot
+            
         all_compiled_opportunities.extend(stock_setups)
         time.sleep(0.5)
         
@@ -72,35 +77,35 @@ def execute_scan_cycle():
             # Sort globally by the best Reward-to-Risk ratio
             sorted_matrix = filtered_df.sort_values(by='Ratio', ascending=False)
             
-            # Take only the Top 5 setups to avoid cluttering your text feed
-            top_setups = sorted_matrix.head(5).to_dict('records')
+            # 💡 CHANGED: Grab the Top 10 setups instead of 5
+            top_setups = sorted_matrix.head(10).to_dict('records')
             
-            # 📱 BUILD THE NEW MOBILE-FRIENDLY VERTICAL ALERT CARD FORMAT
-            discord_message = f"🏆 **TOP 5 OPTIONS OPPORTUNITIES** 🏆\n*Generated: {current_time_str} UTC*\n"
-            discord_message += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            # BUILD THE MOBILE-FRIENDLY VERTICAL ALERT CARD FORMAT
+            discord_message = f"🏆 **TOP 10 OPTIONS OPPORTUNITIES** 🏆\n*Generated: {current_time_str} UTC*\n"
+            discord_message += "━" * 16 + "\n"
             
             for index, setup in enumerate(top_setups, 1):
-                # Safeguard against infinite calculations dividing by zero
-                risk_val = f"${setup['Max Risk']:.2f}" if setup['Max Risk'] > 0 else "$0.00"
+                # Safeguard against rendering infinite values gracefully
+                risk_display = f"${setup['Max Risk']:.2f}" if setup['Max Risk'] > 0 else "$0.00"
+                cmp_display = f"${setup['CMP']:.2f}" if 'CMP' in setup else "N/A"
                 
-                # Format each setup as a clear vertical text block
                 discord_message += (
-                    f"🔥 **#{index} | {setup['Ticker']}** (CMP: ${setup['CMP']:.2f})\n"
+                    f"🔥 **#{index} | {setup['Ticker']}** (CMP: {cmp_display})\n"
                     f"🔹 *Strategy:* {setup['Strategy']}\n"
                     f"🔹 *Strikes:* {setup['Strikes']}\n"
                     f"🔹 *Expiry:* {setup['Expiry']}\n"
                     f"💵 *Net Cost/Credit:* ${setup['Mid Price']:.2f}\n"
-                    f"⚠️ *Max Risk:* {risk_val}\n"
+                    f"⚠️ *Max Risk:* {risk_display}\n"
                     f"💰 *Max Reward:* ${setup['Max Reward']:.2f}\n"
-                    f"📈 *Reward/Risk Ratio:* {setup['Ratio']}\n"
-                    "━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📈 *Ratio:* {setup['Ratio']:.2f}\n"
+                    "━" * 16 + "\n"
                 )
             
             send_to_discord(discord_message)
         else:
             send_to_discord(f"⏰ **Scan at {current_time_str} UTC**: No strategies found matching criteria <= $3.00.")
     else:
-        send_to_discord(f"❌ **Scan at {current_time_str} UTC**: Data pipeline payload empty.")
+        send_to_discord(f"❌ **Scan at {current_time_str} UTC**: Strategy calculation payload empty.")
 
 if __name__ == "__main__":
     execute_scan_cycle()
