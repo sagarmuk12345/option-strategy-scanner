@@ -44,7 +44,18 @@ def run_scanner(ticker):
     bull_puts = bull_put.find_bull_put_spreads(master_df, metadata)
     
     all_setups = bull_calls + butterflies + broken_wings + bull_puts
-    return all_setups
+    
+    # Extract CMP safely directly at the data generation layer
+    current_spot = master_df['CMP'].iloc[0] if (master_df is not None and not master_df.empty) else 0.0
+    
+    # ✅ FIX: Break shallow references by creating explicit dict copies
+    independent_setups = []
+    for setup in all_setups:
+        setup_copy = setup.copy()
+        setup_copy['CMP'] = current_spot
+        independent_setups.append(setup_copy)
+        
+    return independent_setups
 
 def execute_scan_cycle():
     target_portfolio = ["AAPL", "GOOGL", "AMZN", "NVDA", "TSLA", "COST", "META", "MSFT"]
@@ -58,13 +69,8 @@ def execute_scan_cycle():
         if not stock_setups:
             continue
             
-        # Get CMP from the data layer to display on the mobile layout
-        master_df, _ = option_chain.fetch_option_data(ticker)
-        current_spot = master_df['CMP'].iloc[0] if (master_df is not None and not master_df.empty) else 0.0
-        
         for setup in stock_setups:
             setup['Ticker'] = ticker
-            setup['CMP'] = current_spot
             
         all_compiled_opportunities.extend(stock_setups)
         time.sleep(0.5)
@@ -77,15 +83,14 @@ def execute_scan_cycle():
             # Sort globally by the best Reward-to-Risk ratio
             sorted_matrix = filtered_df.sort_values(by='Ratio', ascending=False)
             
-            # 💡 CHANGED: Grab the Top 10 setups instead of 5
+            # Grab the unique Top 10 setups
             top_setups = sorted_matrix.head(10).to_dict('records')
             
             # BUILD THE MOBILE-FRIENDLY VERTICAL ALERT CARD FORMAT
             discord_message = f"🏆 **TOP 10 OPTIONS OPPORTUNITIES** 🏆\n*Generated: {current_time_str} UTC*\n"
-            discord_message += "━" * 16 + "\n"
+            discord_message += "━━━━━━━━━━━━━━━━━━━━━━━━\n"
             
             for index, setup in enumerate(top_setups, 1):
-                # Safeguard against rendering infinite values gracefully
                 risk_display = f"${setup['Max Risk']:.2f}" if setup['Max Risk'] > 0 else "$0.00"
                 cmp_display = f"${setup['CMP']:.2f}" if 'CMP' in setup else "N/A"
                 
@@ -98,7 +103,7 @@ def execute_scan_cycle():
                     f"⚠️ *Max Risk:* {risk_display}\n"
                     f"💰 *Max Reward:* ${setup['Max Reward']:.2f}\n"
                     f"📈 *Ratio:* {setup['Ratio']:.2f}\n"
-                    "━" * 16 + "\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 )
             
             send_to_discord(discord_message)
